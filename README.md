@@ -78,3 +78,100 @@ $ python main.py explain test.log
 - **Testing**: Conduct thorough testing of the order processing logic, especially around edge cases like zero quantities or prices.
 ============================================================
 ```
+
+## Architecture
+
+### Overview
+
+`qdrant-rag` is a CLI tool with two commands — `index` and `explain` — that orchestrate a pipeline of five modules: Chunker, Embedder, Indexer, Retriever, and Explainer.
+
+### Component Diagram
+
+```
+index command:
+  Source Files → Chunker → Embedder → Qdrant (upsert)
+
+explain command:
+  Log File → Retriever ──┬── 1. Exact metadata match (function/class/file)
+                         ├── 2. Line-number range lookup
+                         ├── 3. Semantic search on error messages
+                         └── 4. Semantic search on full log text
+                              ↓
+                         Ranked Chunks → Explainer (GPT-4o) → Analysis
+```
+
+### Components
+
+#### 1. CLI Entry Point (`main.py`)
+
+- `argparse` with `index` and `explain` subcommands
+- `index`: dispatches to `rag.indexer.index_directory()`
+- `explain`: calls `rag.retriever.retrieve()` then `rag.explainer.explain()`
+
+#### 2. Chunker (`rag/chunker.py`)
+
+Uses AST-based chunking rather than naive fixed-size text splitting, preserving semantic boundaries:
+
+- **Python**: uses the `ast` module to extract classes, methods, top-level functions, and module-level code blocks
+- **Java**: uses `javalang` to extract classes/interfaces and methods/constructors via brace-matching
+
+Each chunk carries metadata: `file_path`, `language`, `chunk_type`, `function_name`, `class_name`, `package`, `line_start`, `line_end`, `source`.
+
+#### 3. Embedder (`rag/embedder.py`)
+
+- Wraps OpenAI `text-embedding-3-small` (1536 dimensions)
+- `embed_texts()` for batch embedding during indexing
+- `embed_one()` for single query embedding during retrieval
+- Prepends a metadata header to source text before embedding for richer context
+
+#### 4. Indexer (`rag/indexer.py`)
+
+Orchestrates the full indexing pipeline:
+
+1. Discover `.py` and `.java` files (skipping dirs like `.git`, `__pycache__`, `node_modules`, etc.)
+2. Chunk each file with the Chunker
+3. Batch-embed chunks (batch size: 64) with the Embedder
+4. Upsert into Qdrant with cosine distance
+
+Creates the Qdrant collection with payload indexes (keyword indexes on `function_name`, `class_name`, `file_path`; integer indexes on `line_start`, `line_end`) required for filtered search. Uses deterministic UUID5 IDs for idempotent upserts.
+
+#### 5. Retriever (`rag/retriever.py`)
+
+Parses log text with regex patterns for Python tracebacks and Java stack traces, then runs four search strategies in sequence:
+
+| Strategy | Method | Score weight |
+|---|---|---|
+| 1. Exact function match | Scroll with keyword filter | `SCORE_EXACT_FUNCTION = 10` |
+| 2. Exact class match | Scroll with keyword filter | `SCORE_EXACT_CLASS = 5` |
+| 3. Exact file match | Scroll with keyword filter | `SCORE_EXACT_FILE = 3` |
+| 4. Line-number range | Scroll with range filter on `line_start`/`line_end` | `SCORE_LINE_MATCH = 8` |
+| 5. Semantic on errors | Vector search on joined error messages | `score × SCORE_SEMANTIC_MULTIPLIER = 5` |
+| 6. Semantic on full log | Vector search on truncated log text | `score × SCORE_SEMANTIC_MULTIPLIER = 5` |
+
+Results are deduplicated by point ID, scores are accumulated, and the top `TOP_K_FINAL = 15` chunks are returned.
+
+#### 6. Explainer (`rag/explainer.py`)
+
+- Sends retrieved code chunks + original log text to `gpt-4o`
+- System prompt instructs step-by-step execution tracing with code references
+- Returns structured analysis with root cause identification
+
+#### 7. Config (`rag/config.py`)
+
+Central constants used across all modules:
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `COLLECTION_NAME` | `"codebase"` | Qdrant collection |
+| `VECTOR_SIZE` | `1536` | Embedding dimensions |
+| `BATCH_SIZE` | `64` | Chunks per upsert batch |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+| `CHAT_MODEL` | `gpt-4o` | OpenAI chat model |
+| `TOP_K_SEMANTIC` | `10` | Results per semantic search |
+| `TOP_K_FINAL` | `15` | Final chunks sent to explainer |
+
+### Key Design Notes
+
+- **Strict filtering**: every payload field used in a filter has a Qdrant payload index — the server rejects filtered queries on un-indexed fields
+- **Idempotent indexing**: UUID5 IDs derived from file path + chunk content mean re-indexing the same file updates in place rather than duplicating
+- **AST chunking**: preserves function/class boundaries so retrieved chunks map directly to callable units, making GPT-4o's code references more precise
