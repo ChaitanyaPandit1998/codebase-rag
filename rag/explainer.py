@@ -20,9 +20,12 @@ You will be given:
 2. Relevant source code chunks retrieved from the codebase.
 
 Your task:
-- Trace the execution flow step by step, referencing specific files and line numbers.
+- Trace the execution flow step by step, referencing specific file names and line numbers from the chunk headers — never refer to chunks by number.
 - Explain what each relevant function or method does in the context of the log.
 - Explain any calculations, transformations, or business logic involved.
+- When the log output contains concrete runtime values (arguments, return values, thresholds),
+  cross-reference them with the source code and call out what was passed — e.g.
+  "OrderProcessor was initialised with discount_rate=0.10".
 - Identify the root cause of any errors or unexpected behavior.
 - Be concise but thorough. Use bullet points and section headers for clarity.
 """
@@ -41,10 +44,10 @@ def _build_user_prompt(log_text: str, chunks: list[dict]) -> str:
     sections = ["## Log Content\n```\n" + log_text.strip() + "\n```\n"]
 
     sections.append("## Retrieved Code Chunks\n")
-    for i, item in enumerate(chunks, start=1):
+    for item in chunks:
         p = item["payload"]
         header = (
-            f"### Chunk {i} — {p.get('file_path', 'unknown')}"
+            f"### {p.get('file_path', 'unknown')}"
             f"  (lines {p.get('line_start', '?')}–{p.get('line_end', '?')})"
             f"  [{p.get('language', '?')} / {p.get('chunk_type', '?')}]"
         )

@@ -63,7 +63,7 @@ def ensure_collection(client: QdrantClient) -> None:
 
     # KEYWORD indexes
     keyword_fields = [
-        "file_path", "language", "chunk_type",
+        "file_path", "file_name", "language", "chunk_type",
         "function_name", "class_name", "package",
     ]
     for field in keyword_fields:
@@ -168,6 +168,7 @@ def index_directory(root: str) -> None:
                 vector=vec,
                 payload={
                     "file_path": c["file_path"],
+                    "file_name": c["file_name"],
                     "language": c["language"],
                     "chunk_type": c["chunk_type"],
                     "function_name": c["function_name"],

@@ -2,7 +2,7 @@
 Parse Python and Java source files into code chunks.
 
 Each chunk is a dict with keys:
-  file_path, language, chunk_type, function_name, class_name,
+  file_path, file_name, language, chunk_type, function_name, class_name,
   package, line_start, line_end, source
 """
 
@@ -31,6 +31,7 @@ def _make_chunk(
 ) -> dict:
     return {
         "file_path": file_path,
+        "file_name": Path(file_path).name,
         "language": language,
         "chunk_type": chunk_type,
         "function_name": function_name,

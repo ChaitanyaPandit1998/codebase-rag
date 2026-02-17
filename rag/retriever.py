@@ -234,18 +234,21 @@ def retrieve(log_text: str) -> list[dict]:
         exact_hits.extend(_scroll_filter(client, flt))
 
     for fp in parsed.file_paths[:5]:
-        # Match on suffix (file_path stored as full path)
+        # Java frames yield bare filenames (no "/"); match against indexed file_name field.
+        # Python frames yield full paths; match against file_path.
+        field = "file_name" if "/" not in fp else "file_path"
         flt = Filter(
-            must=[FieldCondition(key="file_path", match=MatchValue(value=fp))]
+            must=[FieldCondition(key=field, match=MatchValue(value=fp))]
         )
         exact_hits.extend(_scroll_filter(client, flt))
 
     # Strategy 2: line-number lookup
     line_hits: list[dict] = []
     for fp, lineno in parsed.line_lookups[:10]:
+        field = "file_name" if "/" not in fp else "file_path"
         flt = Filter(
             must=[
-                FieldCondition(key="file_path", match=MatchValue(value=fp)),
+                FieldCondition(key=field, match=MatchValue(value=fp)),
                 FieldCondition(key="line_start", range=Range(lte=lineno)),
                 FieldCondition(key="line_end", range=Range(gte=lineno)),
             ]

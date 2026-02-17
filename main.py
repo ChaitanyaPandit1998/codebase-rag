@@ -5,11 +5,13 @@ Usage:
   python main.py index <path>               Index a codebase directory
   python main.py explain <logfile>          Explain a log file
   python main.py explain --text "..."       Explain inline log text
+  python main.py generate-log              Generate test.log from the test codebase
 """
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -56,6 +58,23 @@ def cmd_explain(args: argparse.Namespace) -> None:
     print("=" * 60)
 
 
+def cmd_generate_log(args: argparse.Namespace) -> None:
+    runner = Path(__file__).parent / "test_codebase" / "run_scenario.py"
+    if not runner.is_file():
+        print(f"[error] Runner script not found: {runner}", file=sys.stderr)
+        sys.exit(1)
+
+    output_path = Path(args.output)
+    result = subprocess.run(
+        [sys.executable, str(runner)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    output_path.write_text(result.stdout, encoding="utf-8")
+    print(f"[generate-log] Written {len(result.stdout.splitlines())} lines to {output_path}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python main.py",
@@ -76,6 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inline log text (use instead of a file path)",
     )
 
+    # generate-log subcommand
+    gen = sub.add_parser(
+        "generate-log",
+        help="Run the test codebase scenario and capture output to a log file",
+    )
+    gen.add_argument(
+        "output", nargs="?", default="test.log",
+        help="Destination log file (default: test.log)",
+    )
+
     return parser
 
 
@@ -87,6 +116,8 @@ def main() -> None:
         cmd_index(args)
     elif args.command == "explain":
         cmd_explain(args)
+    elif args.command == "generate-log":
+        cmd_generate_log(args)
     else:
         parser.print_help()
         sys.exit(1)
